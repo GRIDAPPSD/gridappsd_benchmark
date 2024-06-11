@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "gridappsd-scale"
+version = "0.1.0"
+description = ""
+authors = ["C. Allwardt <3979063+craig8@users.noreply.github.com>"]
+readme = "README.md"
+packages = [
+    {include = "synchrophasor", from="src"},
+    {include = "gridappsd_benchmark", from="src"}
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+gridappsd-python = {version = "^2024.4.1a0", allow-prereleases = true}
+gridappsd-field-bus = {version = "^2024.4.1a0", allow-prereleases = true}
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
