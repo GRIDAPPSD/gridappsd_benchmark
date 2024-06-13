@@ -15,6 +15,7 @@ gridappsd-python = {version = "^2024.4.1a0", allow-prereleases = true}
 gridappsd-field-bus = {version = "^2024.4.1a0", allow-prereleases = true}
 
 [tool.poetry.scripts]
+gridappsd-scale = "gridappsd_benchmark.run_test:_main"
 
 
 [build-system]

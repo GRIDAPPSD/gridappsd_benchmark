@@ -3,12 +3,35 @@ from threading import Thread
 from argparse import Namespace
 from datetime import datetime
 import math
+import logging
 
 import os
 from pathlib import Path
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, asdict
+from pprint import pprint
+from typing import IO
+
+logging.getLogger().setLevel(logging.WARNING)
+
+@dataclass
+class Settings:
+    num_subscribers: int = 1
+    num_publishers: int = 1
+    num_messages_to_publish: int = 10
+    seconds_between_publishes: float = 1 / 60
+    send_results_to_file: None | str = None
+
+@dataclass
+class AppState:
+    main_running: bool = True
+    reset_stats: bool = False
+    show_stats: bool = False
+
+settings = Settings()
+app_state = AppState()
 
 def get_message_to_publish() -> str:
     from synchrophasor.pmu import Pmu
@@ -78,46 +101,70 @@ def get_message_to_publish() -> str:
 
 
 def run_single_subscriber_no_blocking(subscriber_name: str, opts: Namespace):
-    global main_running
+    #global main_running
 
     pth = Path(__file__).parent / 'single_subscriber.py'
     cmd = [sys.executable,
            pth.as_posix(),
-           f"'{subscriber_name}'",
-           "--gridappsd-address", f"'{opts.gridappsd_address}'",
+           f"{subscriber_name}",
+           "--gridappsd-address", f"{opts.gridappsd_address}",
            "--gridappsd-port", str(opts.gridappsd_port),
-           "--username", f"'{opts.username}'",
-           "--password", f"'{opts.password}'",
-           "--subscription-topic", f"'{opts.publish_topic}'"]
-    print(' '.join(cmd))
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, env=os.environ.copy())
+           "--username", f"{opts.username}",
+           "--password", f"{opts.password}",
+           "--subscription-topic", f"{opts.publish_topic}"]
+    #print(' '.join(cmd))
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=os.environ.copy())
     # Set non-blocking process.
-    # os.set_blocking(proc.stdout.fileno(), False)
-    # while main_running:
-    #     line = proc.stdout.readline()
-    #     if line == b'Starting Subscription\n':
-    #         break
-    #     elif line:
-    #         print(line)
-        #time.sleep(0.01)
+    os.set_blocking(proc.stdout.fileno(), False)
+    os.set_blocking(proc.stderr.fileno(), False)
+    while app_state.main_running:
+        line = proc.stdout.readline()
+        err = proc.stderr.readline()
+        if line == b'Starting Subscription\n':
+            break
+        elif line:
+            print(f"The line is: {line}")
 
-    print("Returning proc!")
+        if err:
+            print(f"The error is: {err}")
+        #time.sleep(0.01)
+    print("Subscriber Startup Complete")
     return proc
 
-main_running: bool = True
-reset_stats: bool = False
-show_stats: bool = False
+# main_running: bool = True
+# reset_stats: bool = False
+# show_stats: bool = False
 
-def gather_results_thread(proc_list: list[subprocess.Popen]):
-    global main_running
-    global reset_stats
-    global show_stats
+def gather_results_thread(opts: Namespace, proc_list: list[subprocess.Popen]):
+    # global main_running
+    # global reset_stats
+    # global show_stats
+    # global settings
 
     count_received = 0
     received_taken: dict[str, list[float]] = {}
+    # fh: IO[str] | None = None
 
-    while main_running:
-        if show_stats:
+
+    while app_state.main_running:
+        # if settings.send_results_to_file:
+        #     print(f"Writing results to file {settings.send_results_to_file}.")
+        #     fh = open(settings.send_results_to_file, 'w')
+        # elif fh and not settings.send_results_to_file:
+        #     fh.close()
+        #     fh = None
+        #     print(f"Stopped writing results to file.")
+
+        if settings.num_subscribers > len(proc_list):
+            print(f"Creating Subscriber: {len(proc_list) + 1}")
+            proc_list.append(run_single_subscriber_no_blocking(f"subscriber{len(proc_list) + 1}", opts))
+            continue
+        if settings.num_subscribers < len(proc_list):
+            print(f"Terminating Subscriber: {len(proc_list)}")
+            proc_list.pop().terminate()
+            continue
+
+        if app_state.show_stats:
             for k, v in received_taken.items():
                 count = len(v)
                 total = sum(v)
@@ -125,19 +172,25 @@ def gather_results_thread(proc_list: list[subprocess.Popen]):
                     print(f"No messages received for subscriber: {k}")
                 else:
                     print(f"{k} received: {len(v)} messages, average: {total / count}")
-            show_stats = False
+            if not received_taken.items():
+                print("No messages received yet.")
+            app_state.show_stats = False
 
-        if reset_stats:
+        if app_state.reset_stats:
             count_received = 0
             sum_total = 0
-            reset_stats = False
-            show_stats = False
+            app_state.reset_stats = False
+            app_state.show_stats = False
             received_taken.clear()
 
         for proc in proc_list:
             line = proc.stdout.readline()
-            if line:
-                print(line)
+            if not line:
+                continue
+            # if line:
+            #     if fh:
+            #         fh.write(line.decode('utf-8'))
+            #         fh.flush()
             line = line.decode('utf-8')
             try:
                 subscriber, start, end, taken = line.strip().split(',')
@@ -147,14 +200,19 @@ def gather_results_thread(proc_list: list[subprocess.Popen]):
 
             except ValueError: # Happens because we aren't blocking so stream just comes in.
                 if line != '':
-                    print("The line is: {line}")
+                    print(f"The line is: {line}")
 
-def publish_messages(count: int = 10, sleep_time: float = 1 / 60):
-    gapps = GridAPPSD(stomp_address=opts.gridappsd_address,
-                      stomp_port=opts.gridappsd_port,
-                      username=opts.username,
-                      password=opts.password)
-    print(f"Publishing {count} messages as fast as possible")
+def publish_messages(opts: Namespace, count: int = 10, sleep_time: float = 1 / 60, count_publishers: int = 1):
+    publishers: list[GridAPPSD] = []
+
+    while count_publishers > len(publishers):
+        gapps = GridAPPSD(stomp_address=opts.gridappsd_address,
+                        stomp_port=opts.gridappsd_port,
+                        username=opts.username,
+                        password=opts.password)
+        publishers.append(gapps)
+
+    print(f"Publishing {count} messages, one every {sleep_time}s from {count_publishers} publishers.")
     data_to_send = get_message_to_publish()
     gapps.connect()
     assert gapps.connected
@@ -162,37 +220,60 @@ def publish_messages(count: int = 10, sleep_time: float = 1 / 60):
     for i in range(count):
         ts_now = datetime.utcnow().timestamp()
         message = dict(start=ts_now, payload=data_to_send)
-        gapps.send(opts.publish_topic, message=message)
+        for gapps in publishers:
+            gapps.send(opts.publish_topic, message=message)
+            time.sleep(0.00001)
         time.sleep(sleep_time)
-    gapps.disconnect()
 
-if __name__ == '__main__':
+    for gapps in publishers:
+        gapps.disconnect()
+
+
+def menu():
+    print("""Test Runner Menu
+
+  help -            Show this help
+
+  Settings:
+    set-num-subscribers <int> -             Set number of subscribers
+    set-num-publishers <int> -              Set number of publishers
+    set-num-messages <int> -                Set number of messages to publish in a single test
+    set-seconds-between-publishes <float> - Set number of seconds between publishes
+    set-results-to-file <filename> -        Set the file to write results to
+
+  show-settings -   Show current settings
+  results -         See Results of running tests
+  reset -           Reset results
+  run -             Run a test
+  run-range <int> - Run a range of tests
+
+  exit/quit -       Close the program down
+""")
+
+def is_numeric_and_positive(val: str, can_be_float: bool = False) -> bool:
+    if can_be_float:
+        val = val.replace('.', '')
+    # val = val.replace('.', '')
+    return val.isnumeric() and int(val) > 0
+
+def _main():
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--gridappsd-address", default="localhost", type=str)
     parser.add_argument("--gridappsd-port", default=61613, type=int)
-    parser.add_argument("--publish-topic", default="pmu.data", type=str)
+    parser.add_argument("--publish-topic", default="/topic/pmu.data", type=str)
     parser.add_argument("--username", default="system")
     parser.add_argument("--password", default="manager")
     opts = parser.parse_args()
 
-    proc_list = [run_single_subscriber_no_blocking(subscriber_name="first", opts=opts)]
-
-    results_thread = Thread(target=gather_results_thread, daemon=True, args=[proc_list])
-    results_thread.start()
-
-    print("Starting Up")
-    def menu():
-        print("""Test Runner Menu
-
-  help - Show this help
-  results - See Results of test
-  reset - Reset results
-  run - Run a test
-  exit - Close the program down
-""")
     menu()
+    proc_list: list = []
+
+    results_thread = Thread(target=gather_results_thread,
+                            daemon=True,
+                            args=[opts, proc_list])
+    results_thread.start()
     exit_yes = False
     while not exit_yes:
         result = input(">")
@@ -201,17 +282,64 @@ if __name__ == '__main__':
             case 'help':
                 menu()
             case 'results':
-                show_stats = True
+                app_state.show_stats = True
             case 'quit' | 'exit':
                 exit_yes = True
                 break
             case 'run':
-                publish_messages()
+                # print(f"Sending:\n{get_message_to_publish()}")
+                publish_messages(count=settings.num_messages_to_publish,
+                                 sleep_time=settings.seconds_between_publishes,
+                                 count_publishers=settings.num_publishers)
+
+            case s if s.startswith('run-range ') and is_numeric_and_positive(
+                s.split()[1]):
+                num_tests = int(s.split()[1])
+                for i in range(num_tests):
+                    print(f"Running test {i + 1} of {num_tests}")
+                    publish_messages(
+                        opts=opts,
+                        count=settings.num_messages_to_publish,
+                        sleep_time=settings.seconds_between_publishes,
+                        count_publishers=settings.num_publishers)
+                    app_state.show_stats = True
+                app_state.show_stats = True
             case 'reset':
-                reset_stats = True
+                app_state.reset_stats = True
+            # case s if s.startswith('set-results-to-file '):
+            #     settings.send_results_to_file = s.split()[1]
+            #     if settings.send_results_to_file:
+            #         print(
+            #             f"Results will be written to: {settings.send_results_to_file}"
+            #         )
+            #     else:
+            #         print("Results will not be written to a file.")
+            #         settings.send_results_to_file = None
+            case s if s.startswith('set-num-subscribers '
+                                   ) and is_numeric_and_positive(s.split()[1]):
+                settings.num_subscribers = int(s.split()[1])
+            case s if s.startswith('set-num-publishers '
+                                   ) and is_numeric_and_positive(s.split()[1]):
+                settings.num_publishers = int(s.split()[1])
+            case s if s.startswith(
+                'set-num-messages ') and is_numeric_and_positive(s.split()[1]):
+                settings.num_messages_to_publish = int(s.split()[1])
+            case s if s.startswith(
+                'set-seconds-between-publishes ') and is_numeric_and_positive(
+                    s, can_be_float=True):
+                settings.seconds_between_publishes = float(s.split()[1])
+            case 'show-settings':
+                pprint(asdict(settings))
+            case s:
+                if not s:
+                    continue
+                print(f"Invalid input: {s}")
+
         time.sleep(0.01)
 
-
-    main_running = False
+    app_state.main_running = False
     for proc in proc_list:
         proc.terminate()
+
+if __name__ == '__main__':
+    _main()
