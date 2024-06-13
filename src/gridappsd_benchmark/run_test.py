@@ -78,19 +78,30 @@ def get_message_to_publish() -> str:
 
 
 def run_single_subscriber_no_blocking(subscriber_name: str, opts: Namespace):
+    global main_running
+
     pth = Path(__file__).parent / 'single_subscriber.py'
     cmd = [sys.executable,
            pth.as_posix(),
-           f"{subscriber_name}",
-           "--gridappsd-address", opts.gridappsd_address,
+           f"'{subscriber_name}'",
+           "--gridappsd-address", f"'{opts.gridappsd_address}'",
            "--gridappsd-port", str(opts.gridappsd_port),
-           "--username", opts.username,
-           "--password", opts.password,
-           "--subscription-topic", opts.publish_topic]
-    print(cmd)
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+           "--username", f"'{opts.username}'",
+           "--password", f"'{opts.password}'",
+           "--subscription-topic", f"'{opts.publish_topic}'"]
+    print(' '.join(cmd))
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, env=os.environ.copy())
     # Set non-blocking process.
-    os.set_blocking(proc.stdout.fileno(), False)
+    # os.set_blocking(proc.stdout.fileno(), False)
+    # while main_running:
+    #     line = proc.stdout.readline()
+    #     if line == b'Starting Subscription\n':
+    #         break
+    #     elif line:
+    #         print(line)
+        #time.sleep(0.01)
+
+    print("Returning proc!")
     return proc
 
 main_running: bool = True
@@ -102,7 +113,6 @@ def gather_results_thread(proc_list: list[subprocess.Popen]):
     global reset_stats
     global show_stats
 
-    print(proc_list)
     count_received = 0
     received_taken: dict[str, list[float]] = {}
 
@@ -126,6 +136,8 @@ def gather_results_thread(proc_list: list[subprocess.Popen]):
 
         for proc in proc_list:
             line = proc.stdout.readline()
+            if line:
+                print(line)
             line = line.decode('utf-8')
             try:
                 subscriber, start, end, taken = line.strip().split(',')
@@ -147,12 +159,12 @@ def publish_messages(count: int = 10, sleep_time: float = 1 / 60):
     gapps.connect()
     assert gapps.connected
 
-    for i in range(10):
+    for i in range(count):
         ts_now = datetime.utcnow().timestamp()
         message = dict(start=ts_now, payload=data_to_send)
         gapps.send(opts.publish_topic, message=message)
         time.sleep(sleep_time)
-    gapps.close()
+    gapps.disconnect()
 
 if __name__ == '__main__':
     import argparse
@@ -170,9 +182,7 @@ if __name__ == '__main__':
     results_thread = Thread(target=gather_results_thread, daemon=True, args=[proc_list])
     results_thread.start()
 
-
-
-
+    print("Starting Up")
     def menu():
         print("""Test Runner Menu
 
@@ -199,9 +209,9 @@ if __name__ == '__main__':
                 publish_messages()
             case 'reset':
                 reset_stats = True
+        time.sleep(0.01)
 
 
     main_running = False
     for proc in proc_list:
         proc.terminate()
-

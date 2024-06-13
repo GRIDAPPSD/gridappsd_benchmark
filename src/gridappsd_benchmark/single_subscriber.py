@@ -29,9 +29,9 @@ if __name__ == '__main__':
                       username=opts.username,
                       password=opts.password)
 
-    sys.stderr.write("Starting Subscription")
     gapps.subscribe(opts.subscription_topic, on_message)
 
+    sys.stdout.write("Starting Subscription\n")
 
     while True:
         time.sleep(0.000001)
