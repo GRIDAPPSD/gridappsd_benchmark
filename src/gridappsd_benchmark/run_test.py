@@ -1,3 +1,15 @@
+# -*- coding: utf-8 -*- {{{
+# ===----------------------------------------------------------------------===
+#                 GridAPPS-D Benchmarking Tool
+# ===----------------------------------------------------------------------===
+#
+# Copyright 2024 Battelle Memorial Institute
+#
+# Licensed under BSD-3
+# See the LICENSE file for more information
+#
+# ===----------------------------------------------------------------------===
+# }}}
 from gridappsd import GridAPPSD
 from threading import Thread
 from argparse import Namespace
@@ -13,8 +25,6 @@ import time
 from dataclasses import dataclass, asdict
 from pprint import pprint
 from typing import IO
-
-logging.getLogger().setLevel(logging.WARNING)
 
 @dataclass
 class Settings:
@@ -38,7 +48,7 @@ def get_message_to_publish() -> str:
     from synchrophasor.frame import ConfigFrame2, HeaderFrame, DataFrame
 
     pmu = Pmu(ip="127.0.0.1", port=9991)
-    pmu.logger.setLevel("DEBUG")
+    pmu.logger.setLevel(logging.WARNING)
 
     ph_v_conversion = int(300000.0 / 32768 * 100000)  # Voltage phasor conversion factor
     ph_i_conversion = int(15000.0 / 32768 * 100000)  # Current phasor conversion factor
@@ -257,14 +267,20 @@ def is_numeric_and_positive(val: str, can_be_float: bool = False) -> bool:
     return val.isnumeric() and int(val) > 0
 
 def _main():
+    logging.getLogger().setLevel(logging.WARNING)
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gridappsd-address", default="localhost", type=str)
-    parser.add_argument("--gridappsd-port", default=61613, type=int)
-    parser.add_argument("--publish-topic", default="/topic/pmu.data", type=str)
-    parser.add_argument("--username", default="system")
-    parser.add_argument("--password", default="manager")
+    parser.add_argument("--gridappsd-address", default="localhost", type=str,
+                        help="The ip address of the gridappsd instance to connect to for all connections.")
+    parser.add_argument("--gridappsd-port", default=61613, type=int,
+                        help="The port of the gridappsd instance to connect to for all connections.")
+    parser.add_argument("--publish-topic", default="/topic/pmu.data", type=str,
+                        help="The topic to publish messages to and subscribe to for all connections.\nNote: This should start with /topic/ or a queue will be created instead.")
+    parser.add_argument("--username", default="system", type=str,
+                        help="The username to use for all connections.")
+    parser.add_argument("--password", default="manager",
+                        help="The password to use for all connections.")
     opts = parser.parse_args()
 
     menu()
@@ -288,7 +304,8 @@ def _main():
                 break
             case 'run':
                 # print(f"Sending:\n{get_message_to_publish()}")
-                publish_messages(count=settings.num_messages_to_publish,
+                publish_messages(opts=opts,
+                                 count=settings.num_messages_to_publish,
                                  sleep_time=settings.seconds_between_publishes,
                                  count_publishers=settings.num_publishers)
 

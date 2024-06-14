@@ -1,3 +1,15 @@
+# -*- coding: utf-8 -*- {{{
+# ===----------------------------------------------------------------------===
+#                 GridAPPS-D Benchmarking Tool
+# ===----------------------------------------------------------------------===
+#
+# Copyright 2024 Battelle Memorial Institute
+#
+# Licensed under BSD-3
+# See the LICENSE file for more information
+#
+# ===----------------------------------------------------------------------===
+# }}}
 from datetime import datetime
 import sys
 import time
@@ -40,4 +52,3 @@ if __name__ == '__main__':
     while True:
         #sys.stderr.write("While waiting!\n")
         time.sleep(0.000001)
-
