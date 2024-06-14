@@ -1,12 +1,19 @@
 [tool.poetry]
 name = "gridappsd-scale"
-version = "0.1.0"
+version = "0.1.2"
 description = ""
 authors = ["C. Allwardt <3979063+craig8@users.noreply.github.com>"]
 readme = "README.md"
+license = "BSD-3-Clause"
+
 packages = [
     {include = "synchrophasor", from="src"},
     {include = "gridappsd_benchmark", from="src"}
+]
+
+include = [
+    { path="LICENSE", format=["sdist", "wheel"]},
+    { path="COPYRIGHT", format=["sdist", "wheel"]}
 ]
 
 [tool.poetry.dependencies]
